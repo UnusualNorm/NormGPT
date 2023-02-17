@@ -6,8 +6,9 @@ import {
   getDmChannel,
   getUser,
   startTyping,
+  getMessages,
 } from "https://deno.land/x/discordeno@18.0.1/mod.ts";
-import { ContinouousChatBot } from "./chatbot.ts";
+import { ChatBot } from "./chatbot.ts";
 import "https://deno.land/x/dotenv@v3.2.0/load.ts";
 
 const DISCORD_TOKEN = Deno.env.get("DISCORD_TOKEN");
@@ -17,17 +18,25 @@ const CHANNEL_ID = Deno.env.get("CHANNEL_ID");
 if (!CHANNEL_ID) throw new Error("No Channel ID Provided...");
 
 const CHATBOT_NAME = Deno.env.get("CHATBOT_NAME");
+const CHATBOT_PERSONA = Deno.env.get("CHATBOT_PERSONA");
+const CHATBOT_HELLO = Deno.env.get("CHATBOT_HELLO");
 if (!CHATBOT_NAME) throw new Error("No Chatbot Name Provided...");
 
-const ALLOWED_MODELS = Deno.env.get("ALLOWED_MODELS")?.split(",");
-const MEMORY_TIME = parseFloat(Deno.env.get("MEMORY_TIME") || "") || 10;
-const PRIVACY_NOTICE = Deno.env.get("PRIVACY_NOTICE") != "false";
+const DEMENTIA_TIME = parseFloat(Deno.env.get("DEMENTIA_TIME") || "");
+const DEMENTIA_COMMAND = Deno.env.get("DEMENTIA_COMMAND");
+
+const KOBOLD_MODELS = Deno.env.get("KOBOLD_MODELS")?.split(",");
 const KOBOLD_KEY = Deno.env.get("KOBOLD_KEY");
-const chatbot = new ContinouousChatBot(
+
+const PRIVACY_NOTICE = Deno.env.get("PRIVACY_NOTICE") != "false";
+
+const chatbot = new ChatBot(
   CHATBOT_NAME,
+  CHATBOT_PERSONA,
+  CHATBOT_HELLO,
   KOBOLD_KEY,
-  MEMORY_TIME * 60 * 1000,
-  ALLOWED_MODELS
+  DEMENTIA_TIME,
+  KOBOLD_MODELS
 );
 
 let typingInterval: number;
@@ -35,7 +44,7 @@ const bot = createBot({
   token: DISCORD_TOKEN,
   intents: Intents.Guilds | Intents.GuildMessages | Intents.MessageContent,
   events: {
-    ready(bot) {
+    async ready(bot) {
       console.log("Successfully connected to gateway :) me happ");
       chatbot.onGeneratedMessage = async (message: string) => {
         console.log(`${CHATBOT_NAME}:`, message);
@@ -50,6 +59,17 @@ const bot = createBot({
         startTyping(bot, CHANNEL_ID);
         typingInterval = setInterval(() => startTyping(bot, CHANNEL_ID), 7500);
       };
+
+      const messages = await getMessages(bot, CHANNEL_ID, {
+        limit: 10,
+      });
+      chatbot.messageHistory = await Promise.all(
+        messages.map(async (message) => [
+          (await getUser(bot, message.authorId)).username,
+          message.content,
+          Date.now(),
+        ])
+      );
     },
   },
 });
@@ -79,7 +99,7 @@ bot.events.messageCreate = async function (bot, message) {
     try {
       const dm = await getDmChannel(bot, message.authorId);
       await sendMessage(bot, dm.id, {
-        content: `By continuing to send messages in this channel, you agree to your messages being stored for ${MEMORY_TIME} minutes.`,
+        content: `By continuing to send messages in this channel, you agree to your messages being stored for ${DEMENTIA_TIME} minutes.`,
       });
       peopleICanHarvestDataFrom.push(message.authorId);
     } catch (e) {
@@ -91,16 +111,27 @@ bot.events.messageCreate = async function (bot, message) {
     return;
   }
 
+  if (DEMENTIA_COMMAND && message.content == DEMENTIA_COMMAND) {
+    await chatbot.clearMemory();
+    return sendMessage(bot, CHANNEL_ID, {
+      content: "https://tenor.com/view/crying-emoji-dies-gif-21956120",
+    });
+  }
+
   const content =
+    // Make all user mentions @User
     (await replaceAsync(
       message.content
+        // Make it single-line
         .replaceAll("\n", " ")
+        // Make all emojis :emoji:
         .replaceAll(
           /^(?:<(?<animated>a)?:(?<name>\w{2,32}):)?(?<id>\d{17,21})>?$/g,
           (...args) => `:${args[2]}:`
         ),
       /^<@!?(?<id>\d{17,20})>$/g,
       async (...args) => `@${(await getUser(bot, args[1] as bigint)).username}`
+      // Add all attachments to the end
     )) + message.attachments.map((attachment) => ` ${attachment.url}`).join("");
 
   const author = await getUser(bot, message.authorId);

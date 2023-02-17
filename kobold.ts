@@ -54,7 +54,7 @@ interface JobStatusResponse extends JobCheckResponse {
   }[];
 }
 
-interface KoboldError {
+export interface KoboldError {
   message: string;
 }
 
@@ -180,14 +180,23 @@ class KoboldAIHorde {
     return json;
   }
 
-  async waitForJob(id: string) {
-    let done = false;
-    while (!done) {
-      await sleep(1500);
-      const status = await this.checkJob(id);
-      done = status.done || !status.is_possible || status.faulted;
+  async cancelJob(id: string): Promise<JobStatusResponse> {
+    const res = await fetchAndRetryIfNecessary(() =>
+      fetch(`https://koboldai.net/api/v2/generate/status/${id}`, {
+        method: "delete",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      })
+    );
+
+    if (res.status != 200) {
+      const json: KoboldError = await res.json();
+      throw new Error(json.message);
     }
-    return this.getJob(id);
+
+    const json: JobStatusResponse = await res.json();
+    return json;
   }
 }
 

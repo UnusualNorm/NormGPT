@@ -1,97 +1,134 @@
 import { KoboldAIHorde } from "./kobold.ts";
 
-export class ContinouousChatBot {
+const sleep = (time: number) =>
+  new Promise<void>((res) => setTimeout(res, time));
+
+export class ChatBot {
   name: string;
+  persona: string;
+  hello: string;
   horde: KoboldAIHorde;
   timeToKeep: number;
+
+  messageHistory: [string, string, number][];
+  generating!: boolean;
+  shouldGenerate!: boolean;
+  cancelGeneration!: () => Promise<void> | void;
 
   onStartGenerating?: () => void;
   onStopGenerating?: () => void;
   onGeneratedMessage?: (message: string) => void;
 
-  generating: boolean;
-  private shouldGenerate: boolean;
-  private messageHistoryHold: [string, string][];
-  private messageHistory: [string, string][];
+  private canceling!: boolean;
 
   constructor(
     name: string,
+    persona?: string,
+    hello?: string,
     apiKey?: string,
     timeToKeep?: number,
     allowedModels?: string[]
   ) {
     this.name = name;
+    this.persona = persona || "A chatbot.";
+    this.hello = hello || "Hello there!";
     this.horde = new KoboldAIHorde(apiKey, {
       models: allowedModels || [],
     });
-    this.timeToKeep = timeToKeep || 5 * 60 * 1000;
+    this.timeToKeep = (timeToKeep || 5) * 60 * 1000;
+    this.messageHistory = [];
+  }
 
-    this.generating = false;
+  dementiate() {
+    const limit = Date.now() - this.timeToKeep;
+    this.messageHistory = this.messageHistory.filter(
+      ([_name, _content, date]) => limit <= date
+    );
+  }
+
+  async registerMessage(user: string, message: string): Promise<void> {
+    this.messageHistory.push([user, message, Date.now()]);
+    if (this.generating && !this.canceling) await this.cancelGeneration();
+    if (!this.generating) return this.startGenerating();
+    else this.shouldGenerate = true;
+    return;
+  }
+
+  private async startGenerating(): Promise<void> {
+    if (!this.generating) this.onStartGenerating?.call({});
+    this.canceling = false;
+    this.generating = true;
+    this.shouldGenerate = false;
+
+    this.dementiate();
+    this.cancelGeneration = () => {
+      this.canceling = true;
+    };
+
+    try {
+      // TODO: Figure out how I can do this with openai... (Doesn't allow cancelling of jobs)
+      // Maybe we can create artificial generation lag? Although that doesn't fix the issue at hand...
+      const prompt = this.createPrompt();
+      const jobId = await this.horde.createJob(prompt);
+
+      let done = false;
+      while (!done) {
+        await sleep(1500);
+        const status = await this.horde.checkJob(jobId);
+        done = status.done || !status.is_possible || status.faulted;
+        if (this.canceling) {
+          if (this.shouldGenerate) return this.startGenerating();
+          this.generating = false;
+          this.canceling = false;
+          this.horde.cancelJob(jobId);
+          this.onStopGenerating?.call({});
+          return;
+        }
+      }
+
+      const status = await this.horde.getJob(jobId);
+      const message = this.parseInput(status.generations[0].text);
+
+      this.onGeneratedMessage?.call({}, message);
+      this.messageHistory.push([this.name, message, Date.now()]);
+
+      if (this.shouldGenerate) this.startGenerating();
+      else {
+        this.generating = false;
+        this.onStopGenerating?.call({});
+      }
+    } catch (error) {
+      console.error(
+        `Encountered an error while generating :( sadge (${error.message})`
+      );
+
+      this.generating = false;
+      this.canceling = false;
+    }
+  }
+
+  async clearMemory() {
     this.shouldGenerate = false;
     this.messageHistory = [];
-    this.messageHistoryHold = [];
-  }
-
-  registerMessage(user: string, message: string) {
-    if (this.generating) {
-      this.shouldGenerate = true;
-      this.messageHistoryHold.push([user, message]);
-      return;
-    }
-
-    this.messageHistory.push([user, message]);
-    setTimeout(() => this.messageHistory.shift(), this.timeToKeep);
-    this.startGenerating();
-  }
-
-  private async startGenerating() {
-    if (!this.generating) this.onStartGenerating?.call({});
-
-    this.generating = true;
-    const prompt = this.createPrompt();
-    const jobId = await this.horde.createJob(prompt);
-    const status = await this.horde.waitForJob(jobId);
-    const message = this.sanitizeInput(status.generations[0].text);
-    this.onGeneratedMessage?.call({}, message);
-
-    this.messageHistory = this.messageHistory.concat(this.messageHistoryHold);
-    const messagesToDelete = this.messageHistoryHold.length;
-    setTimeout(() => {
-      for (let i = 0; i < messagesToDelete; i++) this.messageHistory.shift();
-    }, this.timeToKeep);
-
-    this.messageHistoryHold = [];
-    this.messageHistory.push([this.name, message]);
-    setTimeout(() => this.messageHistory.shift(), this.timeToKeep);
-
-    if (this.shouldGenerate) {
-      this.shouldGenerate = false;
-      this.startGenerating();
-    } else {
-      this.generating = false;
-      this.onStopGenerating?.call({});
-    }
+    await this.cancelGeneration?.call({});
+    return;
   }
 
   private createPrompt() {
-    let prePrompt = `${this.name} is a robot.\n`;
-    prePrompt += `${this.name} is a girl.\n`;
-    prePrompt += `${this.name} is very tolerant of insults and profanity.\n`;
-    prePrompt += `${this.name} is very sarcastic.\n\n`;
+    let prompt = `${this.name}\'s Persona: ${this.persona}\n`;
+    prompt += "<START>\n";
+    prompt += `Unusual Norm: Hello ${this.name}!\n`;
+    prompt += `${this.name}: ${this.hello}\n`;
 
-    let prompt =
-      prePrompt +
-      "[The following is an interesting chat message log between multiple users.]\n";
-
-    this.messageHistory.forEach(
-      (message) => (prompt += `${message[0]}: ${message[1]}\n`)
+    prompt += this.messageHistory.map(
+      (message) => `${message[0]}: ${message[1]}\n`
     );
 
     prompt += `${this.name}:`;
     return prompt;
   }
 
-  sanitizeInput(message: string) {
+  private parseInput(message: string) {
     return message.trim().split("\n")[0];
   }
 }
