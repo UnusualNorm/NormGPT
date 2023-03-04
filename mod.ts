@@ -135,6 +135,8 @@ bot.events.messageCreate = async function (bot, message) {
     )) + message.attachments.map((attachment) => ` ${attachment.url}`).join("");
 
   const author = await getUser(bot, message.authorId);
+  if (!chatbot.helloName) chatbot.helloName = author.username;
+
   chatbot.registerMessage(author.username, content);
   console.log(`${author.username}:`, content);
 };

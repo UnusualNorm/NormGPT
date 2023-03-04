@@ -5,6 +5,7 @@ const sleep = (time: number) =>
 
 export class ChatBot {
   name: string;
+  helloName: string | undefined;
   persona: string;
   hello: string;
   horde: KoboldAIHorde;
@@ -117,7 +118,7 @@ export class ChatBot {
   private createPrompt() {
     let prompt = `${this.name}\'s Persona: ${this.persona}\n`;
     prompt += "<START>\n";
-    prompt += `Unusual Norm: Hello ${this.name}!\n`;
+    prompt += `${this.helloName || "Unusual Norm"}: Hello ${this.name}!\n`;
     prompt += `${this.name}: ${this.hello}\n`;
 
     prompt += this.messageHistory.map(
