@@ -32,7 +32,13 @@ interface JobCreateResponse {
   id: string;
 }
 
-interface JobCheckResponse {
+interface JobStatusResponse {
+  generations: {
+    worker_id: string;
+    worker_name: string;
+    model: string;
+    text: string;
+  }[];
   finished: number;
   processing: number;
   restarted: number;
@@ -43,15 +49,6 @@ interface JobCheckResponse {
   queue_position: number;
   kudos: number;
   is_possible: boolean;
-}
-
-interface JobStatusResponse extends JobCheckResponse {
-  generations: {
-    worker_id: string;
-    worker_name: string;
-    model: string;
-    text: string;
-  }[];
 }
 
 export interface KoboldError {
@@ -97,6 +94,7 @@ class KoboldAIHorde {
     this.apiKey = apiKey || "0000000000";
     this.defaultOptions = {
       prompt: "",
+      models: ["PygmalionAI/pygmalion-6b"],
       params: {
         max_context_length: 1024,
         max_length: 80,
@@ -115,14 +113,13 @@ class KoboldAIHorde {
         ...params,
       },
       workers: [],
-      models: [],
       ...options,
     };
   }
 
   async createJob(text: string): Promise<string> {
     const res = await fetchAndRetryIfNecessary(() =>
-      fetch("https://koboldai.net/api/v2/generate/async", {
+      fetch("https://horde.koboldai.net/api/v2/generate/text/async", {
         method: "post",
         headers: {
           "Content-Type": "application/json",
@@ -144,27 +141,9 @@ class KoboldAIHorde {
     return json.id;
   }
 
-  async checkJob(id: string): Promise<JobCheckResponse> {
-    const res = await fetchAndRetryIfNecessary(() =>
-      fetch(`https://koboldai.net/api/v2/generate/check/${id}`, {
-        headers: {
-          "Content-Type": "application/json",
-        },
-      })
-    );
-
-    if (res.status != 200) {
-      const json: KoboldError = await res.json();
-      throw new Error(json.message);
-    }
-
-    const json: JobCheckResponse = await res.json();
-    return json;
-  }
-
   async getJob(id: string): Promise<JobStatusResponse> {
     const res = await fetchAndRetryIfNecessary(() =>
-      fetch(`https://koboldai.net/api/v2/generate/status/${id}`, {
+      fetch(`https://horde.koboldai.net/api/v2/generate/text/status/${id}`, {
         headers: {
           "Content-Type": "application/json",
         },
@@ -182,7 +161,7 @@ class KoboldAIHorde {
 
   async cancelJob(id: string): Promise<JobStatusResponse> {
     const res = await fetchAndRetryIfNecessary(() =>
-      fetch(`https://koboldai.net/api/v2/generate/status/${id}`, {
+      fetch(`https://horde.koboldai.net/api/v2/generate/status/${id}`, {
         method: "delete",
         headers: {
           "Content-Type": "application/json",
@@ -201,4 +180,4 @@ class KoboldAIHorde {
 }
 
 export { KoboldAIHorde };
-export type { JobCreateOptions, JobCheckResponse, JobStatusResponse };
+export type { JobCreateOptions, JobStatusResponse };

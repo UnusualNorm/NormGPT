@@ -74,7 +74,7 @@ export class ChatBot {
       let done = false;
       while (!done) {
         await sleep(1500);
-        const status = await this.horde.checkJob(jobId);
+        const status = await this.horde.getJob(jobId);
         done = status.done || !status.is_possible || status.faulted;
         if (this.canceling) {
           if (this.shouldGenerate) return this.startGenerating();
