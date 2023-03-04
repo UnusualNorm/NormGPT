@@ -31,8 +31,8 @@ export class ChatBot {
     allowedModels?: string[]
   ) {
     this.name = name;
-    this.persona = persona || "A chatbot.";
-    this.hello = hello || "Hello there!";
+    this.persona = persona || "A friendly AI chatbot.";
+    this.hello = hello || "Hey there! How can I help you today?";
     this.horde = new KoboldAIHorde(apiKey, {
       models: allowedModels || [],
     });
@@ -99,9 +99,7 @@ export class ChatBot {
         this.onStopGenerating?.call({});
       }
     } catch (error) {
-      console.error(
-        `Encountered an error while generating :( sadge (${error.message})`
-      );
+      console.error(`<ERROR (${error.message})>`);
 
       this.generating = false;
       this.canceling = false;
@@ -115,17 +113,17 @@ export class ChatBot {
     return;
   }
 
-  private createPrompt() {
+  createPrompt() {
     let prompt = `${this.name}\'s Persona: ${this.persona}\n`;
     prompt += "<START>\n";
     prompt += `${this.helloName || "Unusual Norm"}: Hello ${this.name}!\n`;
     prompt += `${this.name}: ${this.hello}\n`;
 
-    prompt += this.messageHistory.map(
-      (message) => `${message[0]}: ${message[1]}\n`
-    );
+    prompt += this.messageHistory
+      .map((message) => `${message[0]}: ${message[1]}`)
+      .join("\n");
 
-    prompt += `${this.name}:`;
+    prompt += `\n${this.name}:`;
     return prompt;
   }
 

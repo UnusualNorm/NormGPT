@@ -7,6 +7,8 @@ import {
   getUser,
   startTyping,
   getMessages,
+  Message,
+  User,
 } from "https://deno.land/x/discordeno@18.0.1/mod.ts";
 import { ChatBot } from "./chatbot.ts";
 import "https://deno.land/x/dotenv@v3.2.0/load.ts";
@@ -17,10 +19,8 @@ if (!DISCORD_TOKEN) throw new Error("No Discord Token Provided...");
 const CHANNEL_ID = Deno.env.get("CHANNEL_ID");
 if (!CHANNEL_ID) throw new Error("No Channel ID Provided...");
 
-const CHATBOT_NAME = Deno.env.get("CHATBOT_NAME");
 const CHATBOT_PERSONA = Deno.env.get("CHATBOT_PERSONA");
 const CHATBOT_HELLO = Deno.env.get("CHATBOT_HELLO");
-if (!CHATBOT_NAME) throw new Error("No Chatbot Name Provided...");
 
 const DEMENTIA_TIME = parseFloat(Deno.env.get("DEMENTIA_TIME") || "");
 const DEMENTIA_COMMAND = Deno.env.get("DEMENTIA_COMMAND");
@@ -30,24 +30,26 @@ const KOBOLD_KEY = Deno.env.get("KOBOLD_KEY");
 
 const PRIVACY_NOTICE = Deno.env.get("PRIVACY_NOTICE") != "false";
 
-const chatbot = new ChatBot(
-  CHATBOT_NAME,
-  CHATBOT_PERSONA,
-  CHATBOT_HELLO,
-  KOBOLD_KEY,
-  DEMENTIA_TIME,
-  KOBOLD_MODELS
-);
-
+let chatbot: ChatBot;
 let typingInterval: number;
 const bot = createBot({
   token: DISCORD_TOKEN,
   intents: Intents.Guilds | Intents.GuildMessages | Intents.MessageContent,
   events: {
     async ready(bot) {
-      console.log("Successfully connected to gateway :) me happ");
+      const user = await getUser(bot, bot.id);
+      console.log(`<CONNECT (${user.username})>`);
+      chatbot = new ChatBot(
+        user.username,
+        CHATBOT_PERSONA,
+        CHATBOT_HELLO,
+        KOBOLD_KEY,
+        DEMENTIA_TIME,
+        KOBOLD_MODELS
+      );
+
       chatbot.onGeneratedMessage = async (message: string) => {
-        console.log(`${CHATBOT_NAME}:`, message);
+        console.log(`${user.username}:`, message);
         await sendMessage(bot, CHANNEL_ID, {
           content: message,
         });
@@ -60,16 +62,43 @@ const bot = createBot({
         typingInterval = setInterval(() => startTyping(bot, CHANNEL_ID), 7500);
       };
 
-      const messages = await getMessages(bot, CHANNEL_ID, {
-        limit: 10,
-      });
-      chatbot.messageHistory = await Promise.all(
-        messages.map(async (message) => [
-          (await getUser(bot, message.authorId)).username,
-          message.content,
-          Date.now(),
-        ])
+      let hasFoundFirstMessage = false;
+      const rawMessages = (
+        await getMessages(bot, CHANNEL_ID, {
+          limit: 10,
+        })
+      )
+        .array()
+        .reverse()
+        .filter((message) => {
+          if (message.authorId != bot.id) {
+            hasFoundFirstMessage = true;
+            return true;
+          }
+          return hasFoundFirstMessage;
+        });
+
+      const messages: (Message & { author: User })[] = await Promise.all(
+        rawMessages.map(async (message) => ({
+          ...message,
+          author: await getUser(bot, message.authorId),
+        }))
       );
+
+      chatbot.messageHistory = messages.map((message) => [
+        message.author.username,
+        message.content,
+        Date.now(),
+      ]);
+
+      const firstMessage = chatbot.messageHistory.find(
+        (message) => message[0] != chatbot.name
+      );
+      if (firstMessage) chatbot.helloName = firstMessage[0];
+
+      const prompts = chatbot.createPrompt().split("\n");
+      prompts.pop();
+      console.log(prompts.join("\n"));
     },
   },
 });
@@ -95,7 +124,6 @@ bot.events.messageCreate = async function (bot, message) {
   if (String(message.channelId) != CHANNEL_ID) return;
 
   if (PRIVACY_NOTICE && !peopleICanHarvestDataFrom.includes(message.authorId)) {
-    console.log("User did not see my data harvesting notice :( big sad");
     try {
       const dm = await getDmChannel(bot, message.authorId);
       await sendMessage(bot, dm.id, {
@@ -103,7 +131,6 @@ bot.events.messageCreate = async function (bot, message) {
       });
       peopleICanHarvestDataFrom.push(message.authorId);
     } catch (e) {
-      console.error(e);
       await sendMessage(bot, CHANNEL_ID, {
         content: `<@${message.authorId}>, I failed to send the Privacy Notice to your dm's... (Check your privacy settings?)`,
       });
@@ -113,6 +140,8 @@ bot.events.messageCreate = async function (bot, message) {
 
   if (DEMENTIA_COMMAND && message.content == DEMENTIA_COMMAND) {
     await chatbot.clearMemory();
+    chatbot.helloName = undefined;
+    console.log(`<CLEAR (${(await getUser(bot, message.authorId)).username})>`);
     return sendMessage(bot, CHANNEL_ID, {
       content: "https://tenor.com/view/crying-emoji-dies-gif-21956120",
     });
@@ -135,7 +164,14 @@ bot.events.messageCreate = async function (bot, message) {
     )) + message.attachments.map((attachment) => ` ${attachment.url}`).join("");
 
   const author = await getUser(bot, message.authorId);
-  if (!chatbot.helloName) chatbot.helloName = author.username;
+  if (!chatbot.helloName) {
+    chatbot.helloName = author.username;
+    console.log(
+      `${chatbot.helloName || "Unusual Norm"}: Hello ${chatbot.name}!\n${
+        chatbot.name
+      }: ${chatbot.hello}`
+    );
+  }
 
   chatbot.registerMessage(author.username, content);
   console.log(`${author.username}:`, content);
