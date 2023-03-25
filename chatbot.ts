@@ -88,7 +88,7 @@ export class ChatBot {
       }
 
       const status = await this.horde.getJob(jobId);
-      const message = this.parseInput(status.generations[0].text);
+      const message = this.parseInput(status.generations[0]?.text || "...");
 
       this.onGeneratedMessage?.call({}, message);
       this.messageHistory.push([this.name, message, Date.now()]);
