@@ -143,7 +143,7 @@ bot.events.messageCreate = async function (bot, message) {
     chatbot.helloName = undefined;
     console.log(`<CLEAR (${(await getUser(bot, message.authorId)).username})>`);
     return sendMessage(bot, CHANNEL_ID, {
-      content: "https://tenor.com/view/crying-emoji-dies-gif-21956120",
+      content: Deno.env.get("DEMENTIA_RESPONSE") ?? "https://tenor.com/view/crying-emoji-dies-gif-21956120",
     });
   }
 
