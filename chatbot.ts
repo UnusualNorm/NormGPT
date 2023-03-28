@@ -9,11 +9,12 @@ export class ChatBot {
   persona: string;
   hello: string;
   horde: KoboldAIHorde;
-  timeToKeep: number;
+  memoryTimeLimit: number;
+  memorySpaceLimit: number;
 
-  messageHistory: [string, string, number][];
-  generating!: boolean;
-  shouldGenerate!: boolean;
+  memory: [string, string, number][];
+  isGenerating!: boolean;
+  shouldContinueGenerating!: boolean;
   cancelGeneration!: () => Promise<void> | void;
 
   onStartGenerating?: () => void;
@@ -23,45 +24,47 @@ export class ChatBot {
   private canceling!: boolean;
 
   constructor(
-    name: string,
-    persona?: string,
-    hello?: string,
-    apiKey?: string,
-    timeToKeep?: number,
-    allowedModels?: string[]
+    opts: {
+      name: string;
+      persona?: string;
+      hello?: string;
+      apiKey?: string;
+      memoryTimeLimit?: number;
+      allowedModels?: string[];
+      memorySpaceLimit?: number;
+    },
+    memory?: [string, string, number][]
   ) {
-    this.name = name;
-    this.persona = persona || "A friendly AI chatbot.";
-    this.hello = hello || "Hey there! How can I help you today?";
-    this.horde = new KoboldAIHorde(apiKey, {
-      models: allowedModels || [],
+    this.name = opts.name;
+    this.persona = opts.persona ?? "A friendly AI chatbot.";
+    this.hello = opts.hello ?? "Hey there! How can I help you today?";
+    this.horde = new KoboldAIHorde(opts.apiKey ?? "000000000", {
+      models: opts.allowedModels || ["PygmalionAI/pygmalion-6b"],
     });
-    this.timeToKeep = (timeToKeep || 5) * 60 * 1000;
-    this.messageHistory = [];
+    this.memoryTimeLimit = opts.memoryTimeLimit ?? 10;
+    this.memorySpaceLimit = opts.memorySpaceLimit ?? Infinity;
+    this.memory = memory ?? [];
   }
 
-  dementiate() {
-    const limit = Date.now() - this.timeToKeep;
-    this.messageHistory = this.messageHistory.filter(
-      ([_name, _content, date]) => limit <= date
-    );
+  cleanMemory() {
+    const limit = Date.now() - this.memoryTimeLimit * 60 * 1000;
+    this.memory = this.memory
+      .filter(([_name, _content, date]) => limit <= date)
+      .slice(0, this.memorySpaceLimit);
   }
 
-  async registerMessage(user: string, message: string): Promise<void> {
-    this.messageHistory.push([user, message, Date.now()]);
-    if (this.generating && !this.canceling) await this.cancelGeneration();
-    if (!this.generating) return this.startGenerating();
-    else this.shouldGenerate = true;
+  async pushMessage(user: string, message: string): Promise<void> {
+    this.memory.push([user, message, Date.now()]);
+    if (this.isGenerating && !this.canceling) await this.cancelGeneration();
+    if (!this.isGenerating && !this.canceling) return this.startGenerating();
+    else this.shouldContinueGenerating = true;
     return;
   }
 
   private async startGenerating(): Promise<void> {
-    if (!this.generating) this.onStartGenerating?.call({});
-    this.canceling = false;
-    this.generating = true;
-    this.shouldGenerate = false;
-
-    this.dementiate();
+    if (!this.isGenerating) this.onStartGenerating?.();
+    this.isGenerating = true;
+    this.cleanMemory();
     this.cancelGeneration = () => {
       this.canceling = true;
     };
@@ -76,13 +79,16 @@ export class ChatBot {
       while (!done) {
         await sleep(1500);
         const status = await this.horde.getJob(jobId);
-        done = status.done || !status.is_possible || status.faulted;
+        done = status.done;
+        if (!status.is_possible || status.faulted)
+          throw new Error("Generation failed.");
+
         if (this.canceling) {
-          if (this.shouldGenerate) return this.startGenerating();
-          this.generating = false;
-          this.canceling = false;
           this.horde.cancelJob(jobId);
-          this.onStopGenerating?.call({});
+          this.canceling = false;
+          if (this.shouldContinueGenerating) return this.startGenerating();
+          this.isGenerating = false;
+          this.onStopGenerating?.();
           return;
         }
       }
@@ -90,25 +96,29 @@ export class ChatBot {
       const status = await this.horde.getJob(jobId);
       const message = this.parseInput(status.generations[0]?.text || "...");
 
-      this.onGeneratedMessage?.call({}, message);
-      this.messageHistory.push([this.name, message, Date.now()]);
+      this.onGeneratedMessage?.(message);
+      this.memory.push([this.name, message, Date.now()]);
 
-      if (this.shouldGenerate) this.startGenerating();
-      else {
-        this.generating = false;
-        this.onStopGenerating?.call({});
+      if (this.shouldContinueGenerating) {
+        this.shouldContinueGenerating = false;
+        this.canceling = false;
+        this.startGenerating();
+      } else {
+        this.isGenerating = false;
+        this.canceling = false;
+        this.onStopGenerating?.();
       }
-    } catch (error) {
-      console.error(`<ERROR (${error.message})>`);
-
-      this.generating = false;
+    } catch (error: any) {
+      this.isGenerating = false;
       this.canceling = false;
+      this.onGeneratedMessage?.("...");
+      this.onStopGenerating?.();
     }
   }
 
   async clearMemory() {
-    this.shouldGenerate = false;
-    this.messageHistory = [];
+    this.shouldContinueGenerating = false;
+    this.memory = [];
     await this.cancelGeneration?.call({});
     return;
   }
@@ -119,7 +129,7 @@ export class ChatBot {
     prompt += `${this.helloName || "Unusual Norm"}: Hello ${this.name}!\n`;
     prompt += `${this.name}: ${this.hello}\n`;
 
-    prompt += this.messageHistory
+    prompt += this.memory
       .map((message) => `${message[0]}: ${message[1]}`)
       .join("\n");
 
@@ -128,6 +138,6 @@ export class ChatBot {
   }
 
   private parseInput(message: string) {
-    return message.trim().split("\n")[0];
+    return message.trim().split("\n")[0]!;
   }
 }

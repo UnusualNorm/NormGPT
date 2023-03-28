@@ -1,13 +1,13 @@
 import {
   createBot,
-  Intents,
-  startBot,
-  sendMessage,
   getDmChannel,
-  getUser,
-  startTyping,
   getMessages,
+  getUser,
+  Intents,
   Message,
+  sendMessage,
+  startBot,
+  startTyping,
   User,
 } from "https://deno.land/x/discordeno@18.0.1/mod.ts";
 import { ChatBot } from "./chatbot.ts";
@@ -39,21 +39,21 @@ const bot = createBot({
     async ready(bot) {
       const user = await getUser(bot, bot.id);
       console.log(`<CONNECT (${user.username})>`);
-      chatbot = new ChatBot(
-        user.username,
-        CHATBOT_PERSONA,
-        CHATBOT_HELLO,
-        KOBOLD_KEY,
-        DEMENTIA_TIME,
-        KOBOLD_MODELS
-      );
+      chatbot = new ChatBot({
+        name: user.username,
+        persona: CHATBOT_PERSONA,
+        hello: CHATBOT_HELLO,
+        apiKey: KOBOLD_KEY,
+        memoryTimeLimit: DEMENTIA_TIME,
+        allowedModels: KOBOLD_MODELS,
+      });
 
       chatbot.onGeneratedMessage = async (message: string) => {
         console.log(`${user.username}:`, message);
         await sendMessage(bot, CHANNEL_ID, {
           content: message,
         });
-        if (chatbot.generating) startTyping(bot, CHANNEL_ID);
+        if (chatbot.isGenerating) startTyping(bot, CHANNEL_ID);
       };
 
       chatbot.onStopGenerating = () => clearInterval(typingInterval);
@@ -82,17 +82,17 @@ const bot = createBot({
         rawMessages.map(async (message) => ({
           ...message,
           author: await getUser(bot, message.authorId),
-        }))
+        })),
       );
 
-      chatbot.messageHistory = messages.map((message) => [
+      chatbot.memory = messages.map((message) => [
         message.author.username,
         message.content,
         Date.now(),
       ]);
 
-      const firstMessage = chatbot.messageHistory.find(
-        (message) => message[0] != chatbot.name
+      const firstMessage = chatbot.memory.find(
+        (message) => message[0] != chatbot.name,
       );
       if (firstMessage) chatbot.helloName = firstMessage[0];
 
@@ -106,7 +106,7 @@ const bot = createBot({
 async function replaceAsync(
   str: string,
   regex: RegExp,
-  asyncFn: (match: string, ...args: unknown[]) => Promise<string>
+  asyncFn: (match: string, ...args: unknown[]) => Promise<string>,
 ) {
   const promises: Promise<string>[] = [];
   str.replace(regex, (match, ...args) => {
@@ -127,12 +127,14 @@ bot.events.messageCreate = async function (bot, message) {
     try {
       const dm = await getDmChannel(bot, message.authorId);
       await sendMessage(bot, dm.id, {
-        content: `By continuing to send messages in this channel, you agree to your messages being stored for ${DEMENTIA_TIME} minutes.`,
+        content:
+          `By continuing to send messages in this channel, you agree to your messages being stored for ${DEMENTIA_TIME} minutes.`,
       });
       peopleICanHarvestDataFrom.push(message.authorId);
     } catch (e) {
       await sendMessage(bot, CHANNEL_ID, {
-        content: `<@${message.authorId}>, I failed to send the Privacy Notice to your dm's... (Check your privacy settings?)`,
+        content:
+          `<@${message.authorId}>, I failed to send the Privacy Notice to your dm's... (Check your privacy settings?)`,
       });
     }
     return;
@@ -143,7 +145,8 @@ bot.events.messageCreate = async function (bot, message) {
     chatbot.helloName = undefined;
     console.log(`<CLEAR (${(await getUser(bot, message.authorId)).username})>`);
     return sendMessage(bot, CHANNEL_ID, {
-      content: Deno.env.get("DEMENTIA_RESPONSE") ?? "https://tenor.com/view/crying-emoji-dies-gif-21956120",
+      content: Deno.env.get("DEMENTIA_RESPONSE") ??
+        "https://tenor.com/view/crying-emoji-dies-gif-21956120",
     });
   }
 
@@ -156,10 +159,10 @@ bot.events.messageCreate = async function (bot, message) {
         // Make all emojis :emoji:
         .replaceAll(
           /^(?:<(?<animated>a)?:(?<name>\w{2,32}):)?(?<id>\d{17,21})>?$/g,
-          (...args) => `:${args[2]}:`
+          (...args) => `:${args[2]}:`,
         ),
       /^<@!?(?<id>\d{17,20})>$/g,
-      async (...args) => `@${(await getUser(bot, args[1] as bigint)).username}`
+      async (...args) => `@${(await getUser(bot, args[1] as bigint)).username}`,
       // Add all attachments to the end
     )) + message.attachments.map((attachment) => ` ${attachment.url}`).join("");
 
@@ -167,13 +170,13 @@ bot.events.messageCreate = async function (bot, message) {
   if (!chatbot.helloName) {
     chatbot.helloName = author.username;
     console.log(
-      `${chatbot.helloName || "Unusual Norm"}: Hello ${chatbot.name}!\n${
-        chatbot.name
-      }: ${chatbot.hello}`
+      `${
+        chatbot.helloName || "Unusual Norm"
+      }: Hello ${chatbot.name}!\n${chatbot.name}: ${chatbot.hello}`,
     );
   }
 
-  chatbot.registerMessage(author.username, content);
+  chatbot.pushMessage(author.username, content);
   console.log(`${author.username}:`, content);
 };
 
