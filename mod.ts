@@ -20,27 +20,19 @@ if (!DISCORD_TOKEN) throw new Error("No Discord Bot Token Provided...");
 const CHANNEL_ID = Deno.env.get("CHANNEL_ID");
 if (!CHANNEL_ID) throw new Error("No Channel ID Provided...");
 
-const CHATBOT_PERSONA = Deno.env.get("CHATBOT_PERSONA");
-
-const CHATBOT_HELLO = Deno.env.get("CHATBOT_HELLO");
+const CHATBOT_PERSONA = Deno.env.get("CHATBOT_PERSONA") || undefined;
+const CHATBOT_HELLO = Deno.env.get("CHATBOT_HELLO") || undefined;
 
 const MEMORY_TIME = parseFloat(Deno.env.get("MEMORY_TIME")!) || Infinity;
-
 const MEMORY_LIMIT = parseInt(Deno.env.get("MEMORY_LIMIT")!) || Infinity;
-
 const MEMORY_PREFETCH = parseInt(Deno.env.get("MEMORY_PREFETCH") ?? "10");
-
-const MEMORY_COMMAND = Deno.env.get("MEMORY_COMMAND");
-
+const MEMORY_COMMAND = Deno.env.get("MEMORY_COMMAND") || undefined;
 const MEMORY_RESPONSE = Deno.env.get("MEMORY_RESPONSE") ?? "...";
 
+const KOBOLD_KEY = Deno.env.get("KOBOLD_KEY") ?? "000000000";
 const KOBOLD_MODELS = Deno.env.get("KOBOLD_MODELS")?.split(",") ?? [
   "PygmalionAI/pygmalion-6b",
 ];
-
-const KOBOLD_KEY = Deno.env.get("KOBOLD_KEY") ?? "000000000";
-
-const PRIVACY_NOTICE = Deno.env.get("PRIVACY_NOTICE") != "false";
 
 const PING_ONLY = Deno.env.get("PING_ONLY") == "true";
 
@@ -88,6 +80,7 @@ const bot = createBot({
         memoryTimeLimit: MEMORY_TIME,
         memorySpaceLimit: MEMORY_LIMIT,
         allowedModels: KOBOLD_MODELS,
+        mentionOnly: PING_ONLY,
       });
 
       chatbot.onGeneratedMessages = async (messages: string[]) => {
@@ -136,6 +129,19 @@ const bot = createBot({
   },
 });
 
+const isReplyingToMe = async (bot: Bot, message: Message) =>
+  message.messageReference &&
+  message.messageReference.channelId &&
+  message.messageReference.messageId
+    ? (
+        await getMessage(
+          bot,
+          message.messageReference.channelId,
+          message.messageReference.messageId
+        )
+      ).authorId == bot.id
+    : false;
+
 async function replaceAsync(
   str: string,
   regex: RegExp,
@@ -151,70 +157,30 @@ async function replaceAsync(
   return str.replace(regex, () => data.shift() || "");
 }
 
-const peopleICanHarvestDataFrom: bigint[] = [];
 bot.events.messageCreate = async function (bot, message) {
   if (message.authorId == bot.id) return;
   if (String(message.channelId) != CHANNEL_ID) return;
 
-  if (PRIVACY_NOTICE && !peopleICanHarvestDataFrom.includes(message.authorId)) {
-    try {
-      const dm = await getDmChannel(bot, message.authorId);
-      await sendMessage(bot, dm.id, {
-        content: `By continuing to send messages in this channel, you agree to your messages being stored for ${MEMORY_TIME} minutes.`,
-      });
-      peopleICanHarvestDataFrom.push(message.authorId);
-    } catch (e) {
+  const author = await getUser(bot, message.authorId);
+  if (MEMORY_COMMAND && message.content === MEMORY_COMMAND) {
+    chatbot.clearMemory();
+    console.log(`<CLEAR (${author.username})>`);
+    needLogIntro = true;
+    if (MEMORY_RESPONSE)
       await sendMessage(bot, CHANNEL_ID, {
-        content: `<@${message.authorId}>, I failed to send the Privacy Notice to your dm's... (Check your privacy settings?)`,
+        content: MEMORY_RESPONSE,
       });
-    }
     return;
   }
 
-  const author = await getUser(bot, message.authorId);
-
-  if (MEMORY_COMMAND && message.content === MEMORY_COMMAND) {
-    await chatbot.clearMemory();
-    console.log(`<CLEAR (${author.username})>`);
-    needLogIntro = true;
-    return sendMessage(bot, CHANNEL_ID, {
-      content: MEMORY_RESPONSE,
-    });
-  }
-
-  if (message.content == "test")
-    return console.log(
-      `<TEST (${chatbot.isGenerating}, ${chatbot.canceling})>`
-    );
-
   const content = await parseUserInput(bot, message);
 
-  if (
-    !PING_ONLY ||
-    (PING_ONLY &&
-      (message.content.includes(`<@${bot.id}>`) ||
-        (message.messageReference &&
-        message.messageReference.channelId &&
-        message.messageReference.messageId
-          ? (
-              await getMessage(
-                bot,
-                message.messageReference!.channelId!,
-                message.messageReference!.messageId!
-              )
-            ).authorId == bot.id
-          : false)))
-  )
-    chatbot.pushMessage(author.username, content, message.timestamp);
-  else {
-    chatbot.memory.push([author.username, content, message.timestamp]);
-    if (chatbot.isGenerating && !chatbot.canceling)
-      await chatbot.cancelGeneration();
-    if (chatbot.shouldContinueGenerating) {
-      chatbot.shouldContinueGenerating = false;
-      chatbot.startGenerating();
-    }
-  }
+  chatbot.pushMessage(
+    author.username,
+    content,
+    message.timestamp,
+    await isReplyingToMe(bot, message)
+  );
 
   if (needLogIntro) {
     needLogIntro = false;

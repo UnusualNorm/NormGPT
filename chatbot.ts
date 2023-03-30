@@ -7,20 +7,18 @@ export class ChatBot {
   name: string;
   persona?: string;
   hello?: string;
+  mentionOnly: boolean;
   horde: KoboldAIHorde;
   memoryTimeLimit: number;
   memorySpaceLimit: number;
 
   memory: [string, string, number][];
   isGenerating!: boolean;
-  shouldContinueGenerating!: boolean;
   cancelGeneration!: () => Promise<void> | void;
 
   onStartGenerating?: () => void;
   onStopGenerating?: () => void;
   onGeneratedMessages?: (messages: string[]) => void;
-
-  canceling!: boolean;
 
   constructor(
     opts: {
@@ -31,6 +29,7 @@ export class ChatBot {
       memoryTimeLimit: number;
       allowedModels: string[];
       memorySpaceLimit: number;
+      mentionOnly?: boolean;
     },
     memory?: [string, string, number][]
   ) {
@@ -43,6 +42,7 @@ export class ChatBot {
     this.memoryTimeLimit = opts.memoryTimeLimit ?? 10;
     this.memorySpaceLimit = opts.memorySpaceLimit ?? Infinity;
     this.memory = memory ?? [];
+    this.mentionOnly = opts.mentionOnly ?? false;
   }
 
   cleanMemory() {
@@ -52,34 +52,32 @@ export class ChatBot {
       .slice(0, this.memorySpaceLimit);
   }
 
-  async pushMessage(
+  pushMessage(
     user: string,
-    message: string,
-    timestamp: number
-  ): Promise<void> {
-    this.memory.push([user, message, timestamp]);
-    if (this.isGenerating && !this.canceling) await this.cancelGeneration();
-    if (!this.isGenerating && !this.canceling) return this.startGenerating();
-    else if (this.isGenerating && !this.canceling)
-      this.shouldContinueGenerating = true;
+    content: string,
+    timestamp: number,
+    force?: boolean
+  ) {
+    this.memory.push([user, content, timestamp]);
+    if (this.isGenerating) this.cancelGeneration();
+    if (force || !this.mentionOnly || content.includes(this.name))
+      this.startGenerating(this.isGenerating);
     return;
   }
 
-  async startGenerating(): Promise<void> {
-    if (!this.isGenerating) this.onStartGenerating?.();
+  async startGenerating(continuation?: boolean): Promise<void> {
+    if (!continuation) this.onStartGenerating?.();
+
     this.isGenerating = true;
     this.cleanMemory();
 
     let cancelled = false;
-    let cancelPromise: () => void;
-    this.cancelGeneration = () =>
-      new Promise<void>((res) => {
-        this.canceling = true;
-        cancelled = true;
-        cancelPromise = res;
-      });
+    this.cancelGeneration = () => {
+      if (cancelled) return;
+      cancelled = true;
+      return;
+    };
 
-    let status: JobStatusResponse;
     try {
       // TODO: Figure out how I can do this with openai... (Doesn't allow cancelling of jobs)
       // Maybe we can create artificial generation lag? Although that doesn't fix the issue at hand...
@@ -87,47 +85,35 @@ export class ChatBot {
       const jobId = await this.horde.createJob(prompt);
       if (cancelled) {
         await this.horde.cancelJob(jobId);
-        this.canceling = false;
-        this.isGenerating = false;
-        this.onStopGenerating?.();
-        cancelPromise!();
         return;
       }
 
+      let status: JobStatusResponse | undefined;
+
       this.cancelGeneration = async () => {
-        this.canceling = true;
+        if (cancelled || status?.done) return;
+        cancelled = true;
         await this.horde.cancelJob(jobId);
-        this.canceling = false;
-        this.isGenerating = false;
-        this.onStopGenerating?.();
         return;
       };
 
-      let done = false;
-      while (!done) {
+      while (!status?.done) {
         await sleep(1500);
         if (cancelled) return;
         status = await this.horde.getJob(jobId);
-        done = status.done;
         if (!status.is_possible || status.faulted)
           throw new Error("Generation failed.");
       }
 
-      const messages = this.parseInput(status!.generations[0]?.text || "...");
+      const messages = this.parseInput(status.generations[0]?.text || "...");
       this.onGeneratedMessages?.(messages);
       for (const message of messages)
         this.memory.push([this.name, message, Date.now()]);
 
-      // If someone tried to cancel while we were grabbing our finished message,
-      // Ignore it, that's wasted effort.
-      if (this.shouldContinueGenerating) {
-        this.shouldContinueGenerating = false;
-        return this.startGenerating();
-      } else {
-        this.isGenerating = false;
-        this.onStopGenerating?.();
-        return;
-      }
+      if (cancelled) return;
+      this.isGenerating = false;
+      this.onStopGenerating?.();
+      return;
     } catch (error: any) {
       this.isGenerating = false;
       console.error(`<ERROR (${error?.message})>`);
@@ -137,10 +123,13 @@ export class ChatBot {
     }
   }
 
-  async clearMemory() {
-    this.shouldContinueGenerating = false;
+  clearMemory() {
     this.memory = [];
-    await this.cancelGeneration?.call({});
+    if (this.isGenerating) {
+      this.cancelGeneration?.();
+      this.isGenerating = false;
+      this.onStopGenerating?.();
+    }
     return;
   }
 
