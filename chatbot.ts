@@ -60,7 +60,12 @@ export class ChatBot {
   ) {
     this.memory.push([user, content, timestamp]);
     if (this.isGenerating) this.cancelGeneration();
-    if (force || !this.mentionOnly || content.includes(this.name))
+    if (
+      force ||
+      this.isGenerating ||
+      !this.mentionOnly ||
+      content.includes(this.name)
+    )
       this.startGenerating(this.isGenerating);
     return;
   }
