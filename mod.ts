@@ -192,7 +192,10 @@ bot.events.messageCreate = async function (bot, message) {
   if (
     !PING_ONLY ||
     (PING_ONLY &&
-      (message.content.includes(`<@${bot.id}>`) || message.messageReference
+      (message.content.includes(`<@${bot.id}>`) ||
+      (message.messageReference &&
+        message.messageReference.channelId &&
+        message.messageReference.messageId)
         ? (
             await getMessage(
               bot,
