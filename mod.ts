@@ -193,17 +193,17 @@ bot.events.messageCreate = async function (bot, message) {
     !PING_ONLY ||
     (PING_ONLY &&
       (message.content.includes(`<@${bot.id}>`) ||
-      (message.messageReference &&
+        (message.messageReference &&
         message.messageReference.channelId &&
-        message.messageReference.messageId)
-        ? (
-            await getMessage(
-              bot,
-              message.messageReference!.channelId!,
-              message.messageReference!.messageId!
-            )
-          ).authorId == bot.id
-        : false))
+        message.messageReference.messageId
+          ? (
+              await getMessage(
+                bot,
+                message.messageReference!.channelId!,
+                message.messageReference!.messageId!
+              )
+            ).authorId == bot.id
+          : false)))
   )
     chatbot.pushMessage(author.username, content, message.timestamp);
   else {
