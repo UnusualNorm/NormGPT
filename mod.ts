@@ -8,30 +8,70 @@ import {
   sendMessage,
   startBot,
   startTyping,
-  User,
 } from "https://deno.land/x/discordeno@18.0.1/mod.ts";
 import { ChatBot } from "./chatbot.ts";
 import "https://deno.land/x/dotenv@v3.2.0/load.ts";
+import { Bot } from "https://deno.land/x/discordeno@18.0.1/bot.ts";
 
 const DISCORD_TOKEN = Deno.env.get("DISCORD_TOKEN");
-if (!DISCORD_TOKEN) throw new Error("No Discord Token Provided...");
+if (!DISCORD_TOKEN) throw new Error("No Discord Bot Token Provided...");
 
 const CHANNEL_ID = Deno.env.get("CHANNEL_ID");
 if (!CHANNEL_ID) throw new Error("No Channel ID Provided...");
 
 const CHATBOT_PERSONA = Deno.env.get("CHATBOT_PERSONA");
+
 const CHATBOT_HELLO = Deno.env.get("CHATBOT_HELLO");
 
-const DEMENTIA_TIME = parseFloat(Deno.env.get("DEMENTIA_TIME") || "");
-const DEMENTIA_COMMAND = Deno.env.get("DEMENTIA_COMMAND");
+const MEMORY_TIME = Deno.env.has("MEMORY_TIME")
+  ? parseFloat(Deno.env.get("MEMORY_TIME")!)
+  : Infinity;
 
-const KOBOLD_MODELS = Deno.env.get("KOBOLD_MODELS")?.split(",");
-const KOBOLD_KEY = Deno.env.get("KOBOLD_KEY");
+const MEMORY_LIMIT = Deno.env.has("MEMORY_LIMIT")
+  ? parseInt(Deno.env.get("MEMORY_LIMIT")!)
+  : Infinity;
+
+const MEMORY_COMMAND = Deno.env.get("MEMORY_COMMAND");
+
+const MEMORY_RESPONSE = Deno.env.get("MEMORY_RESPONSE") ?? "...";
+
+const KOBOLD_MODELS = Deno.env.get("KOBOLD_MODELS")?.split(",") ?? [
+  "PygmalionAI/pygmalion-6b",
+];
+
+const KOBOLD_KEY = Deno.env.get("KOBOLD_KEY") ?? "000000000";
 
 const PRIVACY_NOTICE = Deno.env.get("PRIVACY_NOTICE") != "false";
 
 let chatbot: ChatBot;
 let typingInterval: number;
+
+let needLogIntro = true;
+const logIntro = () => {
+  const prompt = chatbot.createPrompt().split("\n");
+  prompt.pop();
+  console.log(prompt.join("\n"));
+};
+
+async function parseUserInput(bot: Bot, message: Message) {
+  // Make all user mentions @User
+  return (
+    (await replaceAsync(
+      message.content
+        // Make it single-line
+        .replaceAll("\n", " ")
+        // Make all emojis :emoji:
+        .replaceAll(
+          /<(?:(?<animated>a)?:(?<name>\w{2,32}):)?(?<id>\d{17,21})>/g,
+          (...args) => `:${args[2]}:`
+        ),
+      /<@!?(?<id>\d{17,20})>/g,
+      async (...args) => `@${(await getUser(bot, args[1] as bigint)).username}`
+      // Add all attachments to the end
+    )) + message.attachments.map((attachment) => ` ${attachment.url}`).join("")
+  );
+}
+
 const bot = createBot({
   token: DISCORD_TOKEN,
   intents: Intents.Guilds | Intents.GuildMessages | Intents.MessageContent,
@@ -44,15 +84,24 @@ const bot = createBot({
         persona: CHATBOT_PERSONA,
         hello: CHATBOT_HELLO,
         apiKey: KOBOLD_KEY,
-        memoryTimeLimit: DEMENTIA_TIME,
+        memoryTimeLimit: MEMORY_TIME,
+        memorySpaceLimit: MEMORY_LIMIT,
         allowedModels: KOBOLD_MODELS,
       });
 
-      chatbot.onGeneratedMessage = async (message: string) => {
-        console.log(`${user.username}:`, message);
-        await sendMessage(bot, CHANNEL_ID, {
-          content: message,
-        });
+      chatbot.onGeneratedMessages = async (messages: string[]) => {
+        // This should never happen, but just in case...
+        if (needLogIntro) {
+          needLogIntro = false;
+          logIntro();
+        }
+
+        for (const message of messages) {
+          console.log(`${user.username}:`, message);
+          await sendMessage(bot, CHANNEL_ID, {
+            content: message || "...",
+          });
+        }
         if (chatbot.isGenerating) startTyping(bot, CHANNEL_ID);
       };
 
@@ -62,43 +111,26 @@ const bot = createBot({
         typingInterval = setInterval(() => startTyping(bot, CHANNEL_ID), 7500);
       };
 
-      let hasFoundFirstMessage = false;
-      const rawMessages = (
-        await getMessages(bot, CHANNEL_ID, {
-          limit: 10,
-        })
-      )
-        .array()
-        .reverse()
-        .filter((message) => {
-          if (message.authorId != bot.id) {
-            hasFoundFirstMessage = true;
-            return true;
-          }
-          return hasFoundFirstMessage;
-        });
-
-      const messages: (Message & { author: User })[] = await Promise.all(
-        rawMessages.map(async (message) => ({
-          ...message,
-          author: await getUser(bot, message.authorId),
-        })),
+      const messages: [string, string, number][] = await Promise.all(
+        (
+          await getMessages(bot, CHANNEL_ID, {
+            limit: 10,
+          })
+        )
+          .array()
+          .reverse()
+          .map(async (message) => [
+            (await getUser(bot, message.authorId)).username,
+            await parseUserInput(bot, message),
+            message.timestamp,
+          ])
       );
 
-      chatbot.memory = messages.map((message) => [
-        message.author.username,
-        message.content,
-        Date.now(),
-      ]);
-
-      const firstMessage = chatbot.memory.find(
-        (message) => message[0] != chatbot.name,
-      );
-      if (firstMessage) chatbot.helloName = firstMessage[0];
-
-      const prompts = chatbot.createPrompt().split("\n");
-      prompts.pop();
-      console.log(prompts.join("\n"));
+      chatbot.memory = messages;
+      if (messages.length > 0) {
+        needLogIntro = false;
+        logIntro();
+      }
     },
   },
 });
@@ -106,7 +138,7 @@ const bot = createBot({
 async function replaceAsync(
   str: string,
   regex: RegExp,
-  asyncFn: (match: string, ...args: unknown[]) => Promise<string>,
+  asyncFn: (match: string, ...args: unknown[]) => Promise<string>
 ) {
   const promises: Promise<string>[] = [];
   str.replace(regex, (match, ...args) => {
@@ -127,57 +159,43 @@ bot.events.messageCreate = async function (bot, message) {
     try {
       const dm = await getDmChannel(bot, message.authorId);
       await sendMessage(bot, dm.id, {
-        content:
-          `By continuing to send messages in this channel, you agree to your messages being stored for ${DEMENTIA_TIME} minutes.`,
+        content: `By continuing to send messages in this channel, you agree to your messages being stored for ${MEMORY_TIME} minutes.`,
       });
       peopleICanHarvestDataFrom.push(message.authorId);
     } catch (e) {
       await sendMessage(bot, CHANNEL_ID, {
-        content:
-          `<@${message.authorId}>, I failed to send the Privacy Notice to your dm's... (Check your privacy settings?)`,
+        content: `<@${message.authorId}>, I failed to send the Privacy Notice to your dm's... (Check your privacy settings?)`,
       });
     }
     return;
   }
 
-  if (DEMENTIA_COMMAND && message.content == DEMENTIA_COMMAND) {
+  const author = await getUser(bot, message.authorId);
+
+  if (MEMORY_COMMAND && message.content === MEMORY_COMMAND) {
     await chatbot.clearMemory();
-    chatbot.helloName = undefined;
-    console.log(`<CLEAR (${(await getUser(bot, message.authorId)).username})>`);
+    console.log(`<CLEAR (${author.username})>`);
+    needLogIntro = true;
     return sendMessage(bot, CHANNEL_ID, {
-      content: Deno.env.get("DEMENTIA_RESPONSE") ??
-        "https://tenor.com/view/crying-emoji-dies-gif-21956120",
+      content: MEMORY_RESPONSE,
     });
   }
 
-  const content =
-    // Make all user mentions @User
-    (await replaceAsync(
-      message.content
-        // Make it single-line
-        .replaceAll("\n", " ")
-        // Make all emojis :emoji:
-        .replaceAll(
-          /^(?:<(?<animated>a)?:(?<name>\w{2,32}):)?(?<id>\d{17,21})>?$/g,
-          (...args) => `:${args[2]}:`,
-        ),
-      /^<@!?(?<id>\d{17,20})>$/g,
-      async (...args) => `@${(await getUser(bot, args[1] as bigint)).username}`,
-      // Add all attachments to the end
-    )) + message.attachments.map((attachment) => ` ${attachment.url}`).join("");
-
-  const author = await getUser(bot, message.authorId);
-  if (!chatbot.helloName) {
-    chatbot.helloName = author.username;
-    console.log(
-      `${
-        chatbot.helloName || "Unusual Norm"
-      }: Hello ${chatbot.name}!\n${chatbot.name}: ${chatbot.hello}`,
+  if (message.content == "test")
+    return console.log(
+      `<TEST (${chatbot.isGenerating}, ${chatbot.canceling})>`
     );
-  }
 
-  chatbot.pushMessage(author.username, content);
-  console.log(`${author.username}:`, content);
+  const content = await parseUserInput(bot, message);
+
+  if (message.content.includes(`<@${bot.id}>`))
+    chatbot.pushMessage(author.username, content);
+  else chatbot.memory.push([author.username, content, message.timestamp]);
+
+  if (needLogIntro) {
+    needLogIntro = false;
+    logIntro();
+  } else console.log(`${author.username}:`, content);
 };
 
 await startBot(bot);

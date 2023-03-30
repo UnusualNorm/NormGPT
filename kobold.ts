@@ -97,7 +97,7 @@ class KoboldAIHorde {
       models: ["PygmalionAI/pygmalion-6b"],
       params: {
         max_context_length: 1024,
-        max_length: 80,
+        max_length: 40,
         n: 1,
         rep_pen: 1.08,
         rep_pen_range: 1024,
@@ -119,8 +119,8 @@ class KoboldAIHorde {
 
   async createJob(text: string): Promise<string> {
     const res = await fetchAndRetryIfNecessary(() =>
-      fetch("https://horde.koboldai.net/api/v2/generate/text/async", {
-        method: "post",
+      fetch("https://stablehorde.net/api/v2/generate/text/async", {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
           apiKey: this.apiKey,
@@ -143,7 +143,7 @@ class KoboldAIHorde {
 
   async getJob(id: string): Promise<JobStatusResponse> {
     const res = await fetchAndRetryIfNecessary(() =>
-      fetch(`https://horde.koboldai.net/api/v2/generate/text/status/${id}`, {
+      fetch(`https://stablehorde.net/api/v2/generate/text/status/${id}`, {
         headers: {
           "Content-Type": "application/json",
         },
@@ -161,8 +161,8 @@ class KoboldAIHorde {
 
   async cancelJob(id: string): Promise<JobStatusResponse> {
     const res = await fetchAndRetryIfNecessary(() =>
-      fetch(`https://horde.koboldai.net/api/v2/generate/status/${id}`, {
-        method: "delete",
+      fetch(`https://stablehorde.net/api/v2/generate/text/status/${id}`, {
+        method: "DELETE",
         headers: {
           "Content-Type": "application/json",
         },
