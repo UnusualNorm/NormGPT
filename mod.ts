@@ -23,13 +23,9 @@ const CHATBOT_PERSONA = Deno.env.get("CHATBOT_PERSONA");
 
 const CHATBOT_HELLO = Deno.env.get("CHATBOT_HELLO");
 
-const MEMORY_TIME = Deno.env.has("MEMORY_TIME")
-  ? parseFloat(Deno.env.get("MEMORY_TIME")!)
-  : Infinity;
+const MEMORY_TIME = parseFloat(Deno.env.get("MEMORY_TIME")!) || Infinity;
 
-const MEMORY_LIMIT = Deno.env.has("MEMORY_LIMIT")
-  ? parseInt(Deno.env.get("MEMORY_LIMIT")!)
-  : Infinity;
+const MEMORY_LIMIT = parseInt(Deno.env.get("MEMORY_LIMIT")!) || Infinity;
 
 const MEMORY_COMMAND = Deno.env.get("MEMORY_COMMAND");
 
