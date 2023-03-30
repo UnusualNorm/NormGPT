@@ -1,6 +1,7 @@
 import {
   createBot,
   getDmChannel,
+  getMessage,
   getMessages,
   getUser,
   Intents,
@@ -27,6 +28,8 @@ const MEMORY_TIME = parseFloat(Deno.env.get("MEMORY_TIME")!) || Infinity;
 
 const MEMORY_LIMIT = parseInt(Deno.env.get("MEMORY_LIMIT")!) || Infinity;
 
+const MEMORY_PREFETCH = parseInt(Deno.env.get("MEMORY_PREFETCH") ?? "10");
+
 const MEMORY_COMMAND = Deno.env.get("MEMORY_COMMAND");
 
 const MEMORY_RESPONSE = Deno.env.get("MEMORY_RESPONSE") ?? "...";
@@ -38,6 +41,8 @@ const KOBOLD_MODELS = Deno.env.get("KOBOLD_MODELS")?.split(",") ?? [
 const KOBOLD_KEY = Deno.env.get("KOBOLD_KEY") ?? "000000000";
 
 const PRIVACY_NOTICE = Deno.env.get("PRIVACY_NOTICE") != "false";
+
+const PING_ONLY = Deno.env.get("PING_ONLY") == "true";
 
 let chatbot: ChatBot;
 let typingInterval: number;
@@ -110,7 +115,7 @@ const bot = createBot({
       const messages: [string, string, number][] = await Promise.all(
         (
           await getMessages(bot, CHANNEL_ID, {
-            limit: 10,
+            limit: MEMORY_PREFETCH,
           })
         )
           .array()
@@ -184,9 +189,29 @@ bot.events.messageCreate = async function (bot, message) {
 
   const content = await parseUserInput(bot, message);
 
-  if (message.content.includes(`<@${bot.id}>`))
-    chatbot.pushMessage(author.username, content);
-  else chatbot.memory.push([author.username, content, message.timestamp]);
+  if (
+    !PING_ONLY ||
+    (PING_ONLY &&
+      (message.content.includes(`<@${bot.id}>`) || message.messageReference
+        ? (
+            await getMessage(
+              bot,
+              message.messageReference!.channelId!,
+              message.messageReference!.messageId!
+            )
+          ).authorId == bot.id
+        : false))
+  )
+    chatbot.pushMessage(author.username, content, message.timestamp);
+  else {
+    chatbot.memory.push([author.username, content, message.timestamp]);
+    if (chatbot.isGenerating && !chatbot.canceling)
+      await chatbot.cancelGeneration();
+    if (chatbot.shouldContinueGenerating) {
+      chatbot.shouldContinueGenerating = false;
+      chatbot.startGenerating();
+    }
+  }
 
   if (needLogIntro) {
     needLogIntro = false;

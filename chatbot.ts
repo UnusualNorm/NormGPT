@@ -52,8 +52,12 @@ export class ChatBot {
       .slice(0, this.memorySpaceLimit);
   }
 
-  async pushMessage(user: string, message: string): Promise<void> {
-    this.memory.push([user, message, Date.now()]);
+  async pushMessage(
+    user: string,
+    message: string,
+    timestamp: number
+  ): Promise<void> {
+    this.memory.push([user, message, timestamp]);
     if (this.isGenerating && !this.canceling) await this.cancelGeneration();
     if (!this.isGenerating && !this.canceling) return this.startGenerating();
     else if (this.isGenerating && !this.canceling)
@@ -61,7 +65,7 @@ export class ChatBot {
     return;
   }
 
-  private async startGenerating(): Promise<void> {
+  async startGenerating(): Promise<void> {
     if (!this.isGenerating) this.onStartGenerating?.();
     this.isGenerating = true;
     this.cleanMemory();
